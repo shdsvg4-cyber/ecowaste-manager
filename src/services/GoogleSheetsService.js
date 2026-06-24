@@ -1,47 +1,87 @@
 // Google Sheets Integration Service
-// Fetches data from publicly shared Google Sheets
+// Fetches data from publicly shared Google Sheets with intelligent caching
 
 const SHEET_ID = '1tVgkcyGEnEhWcmj-DV6Zus8e_RmVirsRJg2MoRiq6lw';
 const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos em milissegundos
 
-// Parse CSV data from Google Sheets
+// Parse CSV data from Google Sheets with robust error handling
 export const parseCSVData = (csv) => {
-  const lines = csv.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim());
-  const data = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === '') continue;
+  try {
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return [];
     
-    const obj = {};
-    const currentLine = lines[i].split(',');
+    const headers = lines[0]
+      .split(',')
+      .map(h => h.trim().replace(/"/g, ''));
+    
+    const data = [];
 
-    for (let j = 0; j < headers.length; j++) {
-      obj[headers[j]] = currentLine[j]?.trim() || '';
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '') continue;
+      
+      const obj = {};
+      // Handle quoted fields and commas inside quotes
+      const regex = /("([^"]*)"|[^,]+)/g;
+      const fields = [];
+      let match;
+      
+      while ((match = regex.exec(lines[i])) !== null) {
+        fields.push((match[2] !== undefined ? match[2] : match[1]).trim());
+      }
+
+      for (let j = 0; j < headers.length; j++) {
+        obj[headers[j]] = fields[j] || '';
+      }
+      
+      if (Object.values(obj).some(v => v)) { // Only add non-empty rows
+        data.push(obj);
+      }
     }
-    data.push(obj);
-  }
 
-  return data;
+    return data;
+  } catch (error) {
+    console.error('Error parsing CSV:', error);
+    return [];
+  }
 };
 
-// Fetch waste data from Google Sheets
-export const fetchWasteDataFromSheet = async () => {
+// Fetch waste data from Google Sheets with intelligent caching
+export const fetchWasteDataFromSheet = async (forceRefresh = false) => {
   try {
-    const response = await fetch(CSV_URL);
+    // Check cache first
+    const cached = localStorage.getItem('ecowaste_sheet_cache');
+    if (!forceRefresh && cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      const age = new Date() - new Date(timestamp);
+      
+      if (age < CACHE_TTL) {
+        console.log('Using cached data', age / 1000, 'seconds old');
+        return data;
+      }
+    }
+
+    // Fetch fresh data
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    
+    const response = await fetch(CSV_URL, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
     if (!response.ok) {
-      throw new Error('Failed to fetch sheet data');
+      throw new Error(`HTTP ${response.status}: Failed to fetch sheet data`);
     }
     
     const csvText = await response.text();
     const data = parseCSVData(csvText);
     
-    // Cache the data
+    // Cache the data with timestamp
     localStorage.setItem('ecowaste_sheet_cache', JSON.stringify({
       data,
       timestamp: new Date().toISOString()
     }));
     
+    console.log('Fetched fresh data from Google Sheets:', data.length, 'records');
     return data;
   } catch (error) {
     console.error('Error fetching Google Sheet:', error);
@@ -49,11 +89,17 @@ export const fetchWasteDataFromSheet = async () => {
     // Return cached data if available
     const cached = localStorage.getItem('ecowaste_sheet_cache');
     if (cached) {
+      console.log('Falling back to cached data');
       return JSON.parse(cached).data;
     }
     
     return [];
   }
+};
+
+// Force refresh sheet data (for admin use)
+export const refreshSheetData = async () => {
+  return fetchWasteDataFromSheet(true);
 };
 
 // Extract student waste records from sheet data

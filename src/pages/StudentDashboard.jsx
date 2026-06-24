@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart3, TrendingDown, Target, LogOut, Leaf } from 'lucide-react';
+import { BarChart3, TrendingDown, Target, LogOut, Leaf, Zap, Award } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks';
+import MiniGameModal from '../components/MiniGameModal';
+import BadgesDisplay from '../components/BadgesDisplay';
+import { getCuriosityByDay } from '../data/curiosities';
+import { fetchWasteDataFromSheet, extractStudentRecords } from '../services/GoogleSheetsService';
 
 export function StudentDashboard() {
   const navigate = useNavigate();
@@ -11,6 +15,10 @@ export function StudentDashboard() {
   const [studentGoal, setStudentGoal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [wasteLogs, setWasteLogs] = useState([]);
+  const [sheetData, setSheetData] = useState([]);
+  const [gameOpen, setGameOpen] = useState(false);
+  const [syncTime, setSyncTime] = useState(null);
+  const curiosity = getCuriosityByDay();
 
   useEffect(() => {
     if (!isAuthenticated || user?.isAdmin) {
@@ -18,7 +26,23 @@ export function StudentDashboard() {
       return;
     }
     loadStudentData();
+    syncWithGoogleSheets();
+    
+    // Sincronizar a cada 5 minutos
+    const interval = setInterval(syncWithGoogleSheets, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [isAuthenticated, user, navigate]);
+
+  const syncWithGoogleSheets = async () => {
+    try {
+      const data = await fetchWasteDataFromSheet();
+      setSheetData(data);
+      setSyncTime(new Date());
+      console.log('Sincronizado com Google Sheets:', data.length, 'registros');
+    } catch (error) {
+      console.error('Erro ao sincronizar com Google Sheets:', error);
+    }
+  };
 
   const loadStudentData = () => {
     try {
@@ -34,10 +58,18 @@ export function StudentDashboard() {
           setStudentGoal(goals[current.id]);
         }
         
-        // Load waste logs
-        const allLogs = JSON.parse(localStorage.getItem('ecowaste_waste_logs') || '[]');
-        const studentLogs = allLogs.filter(log => log.studentId === current.id);
-        setWasteLogs(studentLogs);
+        // Load waste logs from sheet
+        if (sheetData.length > 0) {
+          const studentRecords = extractStudentRecords(sheetData, current.email);
+          const wasteLogs = studentRecords.map(record => ({
+            date: record['Data'] || new Date().toISOString(),
+            description: record['Produto'] || record['Description'] || 'Registro de desperdício',
+            amount: parseFloat(record['Desperdício (g)'] || record['Amount'] || 0),
+            reason: record['Motivo'] || record['Reason'] || 'Não especificado',
+            studentId: current.id
+          }));
+          setWasteLogs(wasteLogs);
+        }
       }
       setLoading(false);
     } catch (err) {
@@ -59,6 +91,8 @@ export function StudentDashboard() {
   const wastePercentage = studentGoal 
     ? Math.min((totalWaste / studentGoal.goal) * 100, 100) 
     : 0;
+  const completedChallenges = Math.floor(totalWaste / 1000); // Simulado
+  const quizScore = Math.floor(Math.random() * 100); // Será atualizado
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-cyan-50 to-blue-50 dark:from-navy-900 dark:to-navy-800">
@@ -74,13 +108,20 @@ export function StudentDashboard() {
               <p className="text-sm text-gray-600 dark:text-gray-400">{studentData?.name}</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all"
-          >
-            <LogOut size={18} />
-            Sair
-          </button>
+          <div className="flex items-center gap-4">
+            {syncTime && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                ✓ Atualizado às {syncTime.toLocaleTimeString('pt-BR')}
+              </span>
+            )}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all"
+            >
+              <LogOut size={18} />
+              Sair
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -185,31 +226,61 @@ export function StudentDashboard() {
           </motion.div>
         )}
 
-        {/* Curiosity */}
+        {/* Curiosity Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl p-6 text-white shadow-lg mb-8"
+          className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"
         >
-          <h3 className="text-xl font-bold mb-2">🌱 Curiosidade do Dia</h3>
-          <p className="text-purple-50">
-            Você sabia? Uma pessoa desperdiça, em média, 94kg de comida por ano. 
-            Se você reduzir seu desperdício em apenas 10%, já estará ajudando a salvar 9,4kg de alimentos! 
-            Isso é suficiente para alimentar uma pessoa durante quase 2 semanas!
-          </p>
+          {/* Daily Curiosity */}
+          <div className="bg-gradient-to-br from-purple-500 via-pink-500 to-red-500 rounded-2xl p-6 text-white shadow-lg">
+            <h3 className="text-xl font-bold mb-2 flex items-center gap-2">{curiosity?.icon} Curiosidade do Dia</h3>
+            <p className="text-purple-50 leading-relaxed">
+              {curiosity?.text}
+            </p>
+          </div>
+
+          {/* Mini-Game Button */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setGameOpen(true)}
+            className="bg-gradient-to-br from-amber-400 via-orange-400 to-orange-500 rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition-all flex flex-col items-center justify-center group"
+          >
+            <Zap size={48} className="mb-2 group-hover:animate-pulse" />
+            <h3 className="text-2xl font-bold">Quiz Sustentável</h3>
+            <p className="text-orange-50 text-sm mt-1">Teste seus conhecimentos! 🎮</p>
+            <div className="mt-4 px-6 py-2 bg-white/20 rounded-full text-sm font-semibold group-hover:bg-white/30 transition">
+              Ganhe Pontos
+            </div>
+          </motion.button>
+        </motion.div>
+
+        {/* Badges Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="mb-8"
+        >
+          <BadgesDisplay 
+            wasteAmount={totalWaste}
+            completedChallenges={completedChallenges}
+            quizScore={quizScore}
+          />
         </motion.div>
 
         {/* Waste Logs */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.5 }}
           className="bg-white dark:bg-navy-800 rounded-2xl p-6 border border-gray-200 dark:border-navy-700 shadow-lg"
         >
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
             <BarChart3 size={24} />
-            Histórico de Registros
+            Histórico de Registros ({wasteLogs.length})
           </h3>
           
           {wasteLogs.length === 0 ? (
@@ -247,10 +318,17 @@ export function StudentDashboard() {
         </motion.div>
 
         {/* Footer */}
-        <div className="mt-12 text-center text-gray-500 dark:text-gray-400 text-sm">
-          <p>Desenvolvido por Adrian Resende © 2024</p>
+        <div className="mt-12 text-center text-gray-500 dark:text-gray-400 text-sm pb-8">
+          <p>✨ Desenvolvido por Adrian Resende © 2024 | EcoWaste Manager</p>
         </div>
       </div>
+
+      {/* Mini Game Modal */}
+      <MiniGameModal 
+        isOpen={gameOpen}
+        onClose={() => setGameOpen(false)}
+        studentData={studentData}
+      />
     </div>
   );
 }
