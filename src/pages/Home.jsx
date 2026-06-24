@@ -51,7 +51,7 @@ export function Home() {
           <div className="flex gap-4">
             {isAuthenticated ? (
               <button
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(user?.isAdmin ? '/admin' : '/student-dashboard')}
                 className="btn-primary"
               >
                 Dashboard <ArrowRight size={18} />
@@ -59,13 +59,13 @@ export function Home() {
             ) : (
               <>
                 <button
-                  onClick={() => navigate('/login')}
+                  onClick={() => navigate('/auth')}
                   className="btn-secondary"
                 >
                   Entrar
                 </button>
                 <button
-                  onClick={() => navigate('/login')}
+                  onClick={() => navigate('/auth')}
                   className="btn-primary"
                 >
                   Começar <ArrowRight size={18} />
@@ -96,7 +96,7 @@ export function Home() {
             </p>
             <div className="flex gap-4">
               <button
-                onClick={() => navigate(isAuthenticated ? '/dashboard' : '/login')}
+                onClick={() => navigate(isAuthenticated ? (user?.isAdmin ? '/admin' : '/student-dashboard') : '/auth')}
                 className="btn-primary px-8"
               >
                 {isAuthenticated ? 'Ir para Dashboard' : 'Começar Agora'} <ArrowRight size={20} />
